@@ -12,8 +12,6 @@
 #   Env:    VITE_API_URL = https://<backend-service>.up.railway.app
 
 [build]
-builder = "nixpacks"
-
 [deploy]
 healthcheckPath = "/health"
 restartPolicyType = "on_failure"
