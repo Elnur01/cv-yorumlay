@@ -12,5 +12,4 @@
 #   Env:    VITE_API_URL = https://<backend-service>.up.railway.app
 
 [deploy]
-healthcheckPath = "/health"
 restartPolicyType = "on_failure"
