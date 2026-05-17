@@ -4,8 +4,9 @@ import json
 import re
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import google.generativeai as genai
 
 app = FastAPI(title="CV Yorumlayıcısı API")
@@ -13,9 +14,19 @@ app = FastAPI(title="CV Yorumlayıcısı API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST", "GET", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=False,
 )
+
+# Ensure CORS headers are present even on unhandled 500 errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", ""))
 
@@ -39,21 +50,22 @@ async def evaluate_cv(
     country: str = Form(...),
     sector: str = Form(...),
 ):
-    pdf_bytes = await pdf.read()
-    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+    try:
+        pdf_bytes = await pdf.read()
+        pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
-    model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
 
-    role_search = _load("Logics/role_search.md")
-    visual_arch = _load("Logics/logic_visual_architecture.md")
-    perf_metrics = _load("Logics/logic_performance_metrics.md")
-    strategic = _load("Logics/logic_strategic_alignment.md")
-    career = _load("Logics/logic_career_continuity.md")
-    behavioral = _load("Logics/logic_behavioral_competencies.md")
-    main_instr = _load("main_instruction.md")
+        role_search = _load("Logics/role_search.md")
+        visual_arch = _load("Logics/logic_visual_architecture.md")
+        perf_metrics = _load("Logics/logic_performance_metrics.md")
+        strategic = _load("Logics/logic_strategic_alignment.md")
+        career = _load("Logics/logic_career_continuity.md")
+        behavioral = _load("Logics/logic_behavioral_competencies.md")
+        main_instr = _load("main_instruction.md")
 
-    # ── Phase 0: Regional Market Benchmark ──────────────────────────────────
-    phase0_prompt = f"""
+        # ── Phase 0: Regional Market Benchmark ──────────────────────────────
+        phase0_prompt = f"""
 {role_search}
 
 INSTRUCTIONS:
@@ -65,17 +77,17 @@ Perform the market intelligence search for the following criteria:
 Output the top 5 tools, required certifications, trending keywords, local salary benchmark,
 and alignment verdict format as specified.
 """
-    phase0_resp = model.generate_content(phase0_prompt)
-    regional_benchmark = phase0_resp.text
+        phase0_resp = model.generate_content(phase0_prompt)
+        regional_benchmark = phase0_resp.text
 
-    if not regional_benchmark or not regional_benchmark.strip():
-        raise HTTPException(
-            status_code=500,
-            detail="Phase 1 Hard Gate Failed: Could not establish regional benchmark.",
-        )
+        if not regional_benchmark or not regional_benchmark.strip():
+            raise HTTPException(
+                status_code=500,
+                detail="Phase 1 Hard Gate Failed: Could not establish regional benchmark.",
+            )
 
-    # ── Phase 2 & 3: Modular Analysis ───────────────────────────────────────
-    system_instructions = f"""
+        # ── Phase 2 & 3: Modular Analysis ───────────────────────────────────
+        system_instructions = f"""
 {main_instr}
 
 --- MODULAR EVALUATION RULES ---
@@ -95,7 +107,7 @@ and alignment verdict format as specified.
 {behavioral}
 """
 
-    phase2_prompt = f"""
+        phase2_prompt = f"""
 Here is the Phase 0 Regional Market Benchmark you MUST use for the Strategic Alignment section:
 
 <benchmark>
@@ -139,48 +151,47 @@ Required schema (camelCase, integer scores):
 }}
 """
 
-    cv_part = {
-        "inline_data": {
-            "mime_type": "application/pdf",
-            "data": pdf_b64,
+        cv_part = {
+            "inline_data": {
+                "mime_type": "application/pdf",
+                "data": pdf_b64,
+            }
         }
-    }
 
-    final_resp = model.generate_content(
-        contents=[
-            {"role": "user", "parts": [system_instructions + "\n\n" + phase2_prompt, cv_part]}
-        ],
-        generation_config={"response_mime_type": "application/json"},
-    )
-
-    raw = final_resp.text
-    raw = re.sub(r"```json\n?|```", "", raw).strip()
-
-    try:
-        report = json.loads(raw)
-    except json.JSONDecodeError:
-        first, last = raw.find("{"), raw.rfind("}")
-        if first != -1 and last != -1:
-            try:
-                report = json.loads(raw[first : last + 1])
-            except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=500, detail="Failed to parse AI response as JSON."
-                )
-        else:
-            raise HTTPException(
-                status_code=500, detail="AI response did not contain valid JSON."
-            )
-
-    # Unwrap optional wrapper keys
-    if "CVReport" in report:
-        report = report["CVReport"]
-    elif "report" in report:
-        report = report["report"]
-
-    if not report.get("executiveSummary"):
-        raise HTTPException(
-            status_code=500, detail="AI response missing required 'executiveSummary'."
+        final_resp = model.generate_content(
+            contents=[
+                {"role": "user", "parts": [system_instructions + "\n\n" + phase2_prompt, cv_part]}
+            ],
+            generation_config={"response_mime_type": "application/json"},
         )
 
-    return report
+        raw = final_resp.text
+        raw = re.sub(r"```json\n?|```", "", raw).strip()
+
+        try:
+            report = json.loads(raw)
+        except json.JSONDecodeError:
+            first, last = raw.find("{"), raw.rfind("}")
+            if first != -1 and last != -1:
+                report = json.loads(raw[first: last + 1])
+            else:
+                raise HTTPException(
+                    status_code=500, detail="AI response did not contain valid JSON."
+                )
+
+        if "CVReport" in report:
+            report = report["CVReport"]
+        elif "report" in report:
+            report = report["report"]
+
+        if not report.get("executiveSummary"):
+            raise HTTPException(
+                status_code=500, detail="AI response missing required 'executiveSummary'."
+            )
+
+        return report
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
