@@ -1,13 +1,14 @@
 import os
-import base64
+import io
 import json
 import re
 from pathlib import Path
 
+import fitz  # PyMuPDF
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import google.generativeai as genai
+from openai import OpenAI
 
 app = FastAPI(title="CV Yorumlayıcısı API")
 
@@ -28,13 +29,26 @@ async def global_exception_handler(request: Request, exc: Exception):
         headers={"Access-Control-Allow-Origin": "*"},
     )
 
-genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+client = OpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+    base_url="https://api.deepseek.com",
+)
 
 REPO_ROOT = Path(__file__).parent.parent
 
 
 def _load(relative_path: str) -> str:
     return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract all text from a PDF using PyMuPDF."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+    for page in doc:
+        pages.append(page.get_text())
+    doc.close()
+    return "\n\n".join(pages)
 
 
 @app.get("/health")
@@ -52,9 +66,13 @@ async def evaluate_cv(
 ):
     try:
         pdf_bytes = await pdf.read()
-        pdf_b64 = base64.b64encode(pdf_bytes).decode()
+        cv_text = _extract_pdf_text(pdf_bytes)
 
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        if not cv_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract text from the uploaded PDF. Please ensure it is not a scanned image-only PDF.",
+            )
 
         role_search = _load("Logics/role_search.md")
         visual_arch = _load("Logics/logic_visual_architecture.md")
@@ -77,8 +95,12 @@ Perform the market intelligence search for the following criteria:
 Output the top 5 tools, required certifications, trending keywords, local salary benchmark,
 and alignment verdict format as specified.
 """
-        phase0_resp = model.generate_content(phase0_prompt)
-        regional_benchmark = phase0_resp.text
+        phase0_resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": phase0_prompt}],
+            temperature=0.7,
+        )
+        regional_benchmark = phase0_resp.choices[0].message.content
 
         if not regional_benchmark or not regional_benchmark.strip():
             raise HTTPException(
@@ -119,7 +141,13 @@ Candidate Intake Data:
 - Target Job: {targetJob}
 - Country: {country}
 
-Evaluate the attached CV (PDF) against these benchmarks using the System Instructions.
+Here is the full CV text extracted from the uploaded PDF:
+
+<cv>
+{cv_text}
+</cv>
+
+Evaluate the CV against these benchmarks using the System Instructions.
 Calculate the arithmetic mean of all five sections for the final score.
 If the score is 85+, set verdict to "Interview-Ready", otherwise "Needs Optimization".
 
@@ -151,21 +179,17 @@ Required schema (camelCase, integer scores):
 }}
 """
 
-        cv_part = {
-            "inline_data": {
-                "mime_type": "application/pdf",
-                "data": pdf_b64,
-            }
-        }
-
-        final_resp = model.generate_content(
-            contents=[
-                {"role": "user", "parts": [system_instructions + "\n\n" + phase2_prompt, cv_part]}
+        final_resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": phase2_prompt},
             ],
-            generation_config={"response_mime_type": "application/json"},
+            temperature=0.3,
+            response_format={"type": "json_object"},
         )
 
-        raw = final_resp.text
+        raw = final_resp.choices[0].message.content
         raw = re.sub(r"```json\n?|```", "", raw).strip()
 
         try:
