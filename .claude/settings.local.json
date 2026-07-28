@@ -1,7 +1,24 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git -C /Users/elnurhuseynov/Desktop/orchestration status)"
+      "Bash(git -C /Users/elnurhuseynov/Desktop/orchestration status)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)",
+      "Bash(security find-internet-password *)",
+      "Bash(security find-generic-password *)",
+      "Bash(curl -s -X POST https://backboard.railway.app/graphql/v2 -H 'Authorization: Bearer fd738451-d99a-49f1-9f4f-2d611de1d572' -H 'Content-Type: application/json' -d '{ *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(cd /Users/elnurhuseynov/Desktop/orchestration && grep -ril \"seniority\\\\|Monolith\\\\|nvidia\\\\|company type\" --include=\"*.tsx\" --include=\"*.ts\" --include=\"*.js\" --include=\"*.html\" --include=\"*.py\" --include=\"*.md\" . 2>/dev/null | grep -v node_modules | head -30)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -s -i -m 25 -X OPTIONS \"https://6a66572c0032a728577a.fra.appwrite.run/\" -H \"Origin: https://6a6658960003af581b75.appwrite.network\" -H \"Access-Control-Request-Method: POST\" -H \"Access-Control-Request-Headers: content-type\")",
+      "Bash(curl -s -i -m 40 -X POST \"https://6a66572c0032a728577a.fra.appwrite.run/\" -H \"Origin: https://6a6658960003af581b75.appwrite.network\" -H \"Content-Type: application/json\" -d '{\"action\":\"ping\"}')",
+      "Bash(curl -s -o /tmp/ev_out.txt -w \"HTTP=%{http_code} TIME=%{time_total}s SIZE=%{size_download}\\\\n\" -m 120 -X POST \"https://6a66572c0032a728577a.fra.appwrite.run/\" -H \"Origin: https://6a6658960003af581b75.appwrite.network\" -H \"Content-Type: application/json\" -d '{\"action\":\"evaluate\",\"cv_text\":\"Ali Veli. Software Engineer at Acme 2020-2024. Python, React. BSc CS Bogazici 2019.\",\"currentJob\":\"Software Engineer\",\"targetJob\":\"Senior Software Engineer\",\"country\":\"Germany\",\"sector\":\"Technology\",\"seniority\":\"mid\",\"companyTypeHint\":\"multinational\",\"selected_model\":\"deepseek-v4-flash\"}')",
+      "Read(//tmp/**)",
+      "Bash(curl -s -o /tmp/r1.txt -w \"HTTP=%{http_code} TIME=%{time_total}s\\\\n\" -m 120 -X POST \"https://6a66572c0032a728577a.fra.appwrite.run/\" -H \"Content-Type: application/json\" --data-binary @/tmp/real_cv.json)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -o /tmp/r2.txt -w \"HTTP=%{http_code} TIME=%{time_total}s\\\\n\" -m 120 -X POST \"https://6a66572c0032a728577a.fra.appwrite.run/\" -H \"Content-Type: application/json\" --data-binary @/tmp/real_cv2.json)"
     ]
   }
 }

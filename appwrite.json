@@ -1,0 +1,32 @@
+{
+  "projectId": "69f676b90035c4b12c8a",
+  "projectName": "CV Yorumlayıcı",
+  "functions": [
+    {
+      "$id": "cv-backend",
+      "name": "CV AI Backend",
+      "runtime": "python-3.12",
+      "execute": ["any"],
+      "events": [],
+      "schedule": "",
+      "timeout": 30,
+      "enabled": true,
+      "logging": true,
+      "entrypoint": "src/main.py",
+      "commands": "pip install -r requirements.txt",
+      "path": "functions/cv-backend"
+    }
+  ],
+  "sites": [
+    {
+      "$id": "cv-frontend",
+      "name": "CV Yorumlayıcı Web",
+      "framework": "vite",
+      "buildRuntime": "node-22",
+      "buildCommand": "echo 'already built'",
+      "outputDirectory": ".",
+      "enabled": true,
+      "path": "dist"
+    }
+  ]
+}

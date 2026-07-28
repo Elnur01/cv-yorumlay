@@ -17,7 +17,7 @@ Success is multi-dimensional. We measure on four tiers; the project ships only w
 |---|---|---|---|
 | T1 | Full user flow works end-to-end | 100% pass | E2E Playwright test green on Chrome, Firefox, Safari |
 | T2 | All 7 work packages deployed | 100% checklist items closed | §18 of v4 roadmap |
-| T3 | Backend uptime during study | ≥ 99.5% | Render/Railway dashboard |
+| T3 | Backend uptime during study | ≥ 99.5% | Appwrite dashboard |
 | T4 | API response time (p95) | < 500 ms | Sentry performance |
 | T5 | Page load time (p95) | < 2.5 s on 4G profile | Lighthouse CI |
 | T6 | Sentry error rate | < 1% of requests | Sentry dashboard |

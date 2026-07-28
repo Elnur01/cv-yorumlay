@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CV AI runtime context",
+  "description": "Built by the app from the 3 router questions + seniority + the CV. Drives block selection. Persisted on the session so Phase 1 (score) and Phase 2 (rebuild) read identical selections.",
+  "type": "object",
+  "required": ["mode", "router", "persona_profile", "cv"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["score", "rebuild"],
+      "description": "Which phase. Same persona_profile is used for both."
+    },
+    "router": {
+      "type": "object",
+      "description": "Raw answers from the pre-analysis questions.",
+      "required": ["current_title", "target_role", "target_sector", "target_region", "seniority"],
+      "properties": {
+        "current_title":  { "type": "string" },
+        "target_role":    { "type": "string" },
+        "target_sector":  { "type": "string", "description": "Free text; mapped to a sector overlay by the selector." },
+        "target_region":  { "type": "string", "description": "Used to infer domestic vs multinational together with company signal." },
+        "seniority": {
+          "type": "string",
+          "enum": ["entry", "mid", "senior", "executive", "academic"],
+          "description": "EXPLICIT. Never inferred by the model. Either asked as a 4th tap or derived deterministically from current_title in code."
+        },
+        "company_type_hint": {
+          "type": "string",
+          "enum": ["domestic", "multinational", "unknown"],
+          "default": "unknown",
+          "description": "Optional explicit signal; if unknown the selector infers from region + sector."
+        }
+      }
+    },
+    "persona_profile": {
+      "type": "object",
+      "description": "OUTPUT of the selector. The single source of truth. Persisted and reused across both phases — never re-derived in Phase 2.",
+      "required": ["persona", "sector_overlay", "localization", "example", "output_language"],
+      "properties": {
+        "persona":        { "type": "string", "enum": ["early_career", "experienced", "executive", "academic"] },
+        "sector_overlay": { "type": "string", "enum": ["tech", "finance", "creative", "operational", "general"] },
+        "localization":   { "type": "string", "enum": ["tr_domestic", "intl_multinational"] },
+        "example":        { "type": "string", "enum": ["early_career", "experienced", "executive", "academic"] },
+        "output_language":{ "type": "string", "enum": ["tr", "en"] }
+      }
+    },
+    "cv": {
+      "type": "object",
+      "description": "The candidate's current CV, pre-parsed into structured fields by the app before the model sees it.",
+      "required": ["raw_text"],
+      "properties": {
+        "raw_text":   { "type": "string" },
+        "sections":   { "type": "object", "description": "Optional pre-parsed sections if your parser produces them." },
+        "has_photo":  { "type": "boolean" },
+        "page_count": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -9,6 +9,10 @@ venv/
 __pycache__/
 *.pyc
 
+# Large local archives / scratch experiments — never commit
+*.zip
+cv-specialist/
+
 # Logs
 logs
 *.log
