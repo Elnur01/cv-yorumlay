@@ -23,7 +23,7 @@
       "name": "CV Yorumlayıcı Web",
       "framework": "vite",
       "buildRuntime": "node-22",
-      "installCommand": "npm ci",
+      "installCommand": "npm ci --include=dev",
       "buildCommand": "npm run build",
       "outputDirectory": "./dist",
       "enabled": true,
