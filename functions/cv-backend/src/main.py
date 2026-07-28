@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -31,6 +32,9 @@ LLM_DEADLINE_SECONDS = int(os.environ.get("LLM_DEADLINE_SECONDS", "25"))
 MAX_TOKENS_SCORE = 3000
 MAX_TOKENS_REBUILD = 4000
 
+# Only retry a failed upstream call while at least this much budget remains.
+RETRY_MIN_BUDGET_SECONDS = 15
+
 # provider -> (base_url, env var holding the key)
 PROVIDERS = {
     "nvidia": ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
@@ -61,6 +65,47 @@ DEFAULT_MODEL_ID = "deepseek-v4-flash"
 
 class ConfigError(Exception):
     """Raised when a provider is selected but its API key is not configured."""
+
+
+class UpstreamError(Exception):
+    """Raised when the model provider fails or returns unusable output."""
+
+
+def parse_model_json(raw: str, model_name: str) -> dict:
+    """Parse a completion into JSON, tolerating per-model output quirks.
+
+    Even with response_format=json_object, NIM deployments are not clean:
+    deepseek-v4-flash prefixes stray tokens before the opening brace, and
+    nemotron wraps the object in a ```json fence. Rather than declare those
+    models unusable, recover the object.
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise UpstreamError(f"{model_name} returned an empty response.")
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    fenced = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
+    if fenced:
+        try:
+            return json.loads(fenced.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise UpstreamError(
+        f"{model_name} returned output that is not valid JSON "
+        f"(first 120 chars: {text[:120]!r})."
+    )
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> tuple[str, bool, int]:
@@ -104,8 +149,8 @@ def build_client(provider: str) -> OpenAI:
 
 
 def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: str,
-             max_tokens: int, deadline: float) -> str:
-    """Run the completion under a hard wall-clock deadline.
+             max_tokens: int, deadline: float) -> dict:
+    """Run the completion under a hard wall-clock deadline and parse its JSON.
 
     Returning our own 504 before the runtime is killed is what keeps the CORS
     headers attached to the error response.
@@ -120,7 +165,7 @@ def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: 
     if "deepseek-v4-pro" in model_name or model_name == "deepseek-reasoner":
         extra_kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
 
-    def _run() -> str:
+    def _run() -> dict:
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
@@ -132,10 +177,38 @@ def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: 
             response_format={"type": "json_object"},
             **extra_kwargs,
         )
-        return resp.choices[0].message.content
+        # Parsed inside the retried block on purpose: a truncated or non-JSON
+        # completion is an upstream failure worth one more shot, not a client
+        # error.
+        return parse_model_json(resp.choices[0].message.content, model_name)
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(_run).result(timeout=remaining)
+    # The SDK's own retries are disabled because they silently double latency.
+    # Retry once by hand instead, and only while enough budget is left to have
+    # a realistic chance of finishing — NVIDIA NIM returns transient 503
+    # "ResourceExhausted" errors under load that clear immediately.
+    last_error: Exception | None = None
+    for attempt in range(2):
+        remaining = deadline - time.monotonic()
+        if remaining <= 1:
+            break
+        if attempt > 0 and remaining < RETRY_MIN_BUDGET_SECONDS:
+            break
+        # Deliberately not a `with` block: ThreadPoolExecutor.__exit__ calls
+        # shutdown(wait=True), which blocks until the hung request finishes and
+        # would push us past the deadline we are trying to enforce.
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            return pool.submit(_run).result(timeout=remaining)
+        except FutureTimeout:
+            raise
+        except Exception as e:  # transient upstream failure
+            last_error = e
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    if last_error is not None:
+        raise last_error
+    raise FutureTimeout("No time budget left before contacting the model.")
 
 
 def read_cv(payload: dict) -> tuple[str, bool, int]:
@@ -202,7 +275,7 @@ def main(context):
 
             raw = call_llm(client, upstream_model, system_prompt, user_message,
                            MAX_TOKENS_SCORE, deadline)
-            report = validate_score_response(json.loads(raw), profile["persona"])
+            report = validate_score_response(raw, profile["persona"])
             report["model_used"] = model_id
             report["provider"] = provider
             report["upstream_model"] = upstream_model
@@ -232,7 +305,7 @@ def main(context):
             raw = call_llm(client, upstream_model, system_prompt, user_message,
                            MAX_TOKENS_REBUILD, deadline)
             report = validate_rebuild_response(
-                json.loads(raw), cv_text, persona_profile["localization"]
+                raw, cv_text, persona_profile["localization"]
             )
             report["model_used"] = model_id
             report["provider"] = provider
@@ -261,6 +334,9 @@ def main(context):
     except ConfigError as e:
         context.error(str(e))
         return context.res.json({"error": str(e), "code": "config_error"}, 500, CORS_HEADERS)
+    except UpstreamError as e:
+        context.error(str(e))
+        return context.res.json({"error": str(e), "code": "upstream_error"}, 502, CORS_HEADERS)
     except ValueError as e:
         context.error(str(e))
         return context.res.json({"error": str(e), "code": "bad_request"}, 400, CORS_HEADERS)

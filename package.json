@@ -13,14 +13,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.51.0",
-    "@google/generative-ai": "^0.24.1",
     "appwrite": "^25.0.0",
     "canvas-confetti": "^1.9.4",
-    "pdfjs-dist": "^5.7.284",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "uuid": "^14.0.0"
+    "react-dom": "^19.2.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
