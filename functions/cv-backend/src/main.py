@@ -37,6 +37,15 @@ LLM_DEADLINE_SECONDS = int(os.environ.get("LLM_DEADLINE_SECONDS", "25"))
 # LLM_DEADLINE_SECONDS is configured. Other triggers keep the full budget.
 HTTP_SYNC_CEILING_SECONDS = 28
 
+# Cloudflare fronts Appwrite and replaces any 5xx coming from the origin with
+# its own plain-text error page — which drops both our JSON body and our CORS
+# headers, recreating the phantom CORS error we are trying to eliminate
+# (verified in production: a 504 came back as text/plain "error code: 504",
+# no deployment-id header, no Access-Control-*). 4xx passes through untouched,
+# so every handled failure is reported in the 4xx range and distinguished by
+# the "code" field in the body rather than by HTTP status.
+ERROR_STATUS = 422
+
 MAX_TOKENS_SCORE = 3000
 MAX_TOKENS_REBUILD = 4000
 
@@ -346,25 +355,25 @@ def main(context):
             {
                 "error": (
                     f"The selected model did not answer within {budget}s. "
-                    f"Try a faster model (DeepSeek V4 Flash) or raise the function timeout."
+                    f"Pick a faster model — DeepSeek V4 Flash answers in about 8s."
                 ),
                 "code": "llm_timeout",
                 "elapsed_seconds": elapsed,
             },
-            504,
+            ERROR_STATUS,
             CORS_HEADERS,
         )
     except ConfigError as e:
         context.error(str(e))
-        return context.res.json({"error": str(e), "code": "config_error"}, 500, CORS_HEADERS)
+        return context.res.json({"error": str(e), "code": "config_error"}, ERROR_STATUS, CORS_HEADERS)
     except UpstreamError as e:
         context.error(str(e))
-        return context.res.json({"error": str(e), "code": "upstream_error"}, 502, CORS_HEADERS)
+        return context.res.json({"error": str(e), "code": "upstream_error"}, ERROR_STATUS, CORS_HEADERS)
     except ValueError as e:
         context.error(str(e))
         return context.res.json({"error": str(e), "code": "bad_request"}, 400, CORS_HEADERS)
     except Exception as e:
         context.error(f"{type(e).__name__}: {e}")
         return context.res.json(
-            {"error": f"{type(e).__name__}: {e}", "code": "upstream_error"}, 502, CORS_HEADERS
+            {"error": f"{type(e).__name__}: {e}", "code": "upstream_error"}, ERROR_STATUS, CORS_HEADERS
         )

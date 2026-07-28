@@ -187,10 +187,13 @@ const describeNetworkFailure = (modelId: string): string => {
   const model = MODEL_OPTIONS.find((m) => m.id === modelId);
   const label = model ? `${model.name} (${model.providerLabel})` : modelId;
   const fastest = MODEL_OPTIONS.find((m) => m.id === DEFAULT_MODEL_ID);
-  // Suggesting the model the user already picked would be useless advice.
+  // Deliberately does not suggest raising the function timeout: Appwrite's
+  // synchronous HTTP ceiling (~35s) is independent of it, so that advice sends
+  // people to a setting that cannot fix this. Nor does it suggest the model
+  // the user already picked.
   const suggestion =
     fastest && modelId !== fastest.id
-      ? `Try ${fastest.name} (${fastest.providerLabel}), or raise the cv-backend timeout in the Appwrite console.`
+      ? `Pick a faster model — ${fastest.name} answers in about 8 seconds.`
       : `Check that the cv-backend function is deployed and its API keys are set in the Appwrite console.`;
   return (
     `Could not reach the analysis service while using ${label}. ` +
