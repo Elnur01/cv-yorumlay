@@ -29,6 +29,14 @@ CORS_HEADERS = {
 # reports as a bogus "No 'Access-Control-Allow-Origin'" CORS failure.
 LLM_DEADLINE_SECONDS = int(os.environ.get("LLM_DEADLINE_SECONDS", "25"))
 
+# Appwrite kills a *synchronous HTTP* execution at roughly 35s no matter what
+# the function's own timeout is set to — a 300s function timeout does not raise
+# this ceiling (measured: execution_timeout at 35.2s with timeout=300). That
+# kill is the one response we cannot attach CORS headers to, so for HTTP
+# triggers the budget is clamped below it regardless of how
+# LLM_DEADLINE_SECONDS is configured. Other triggers keep the full budget.
+HTTP_SYNC_CEILING_SECONDS = 28
+
 MAX_TOKENS_SCORE = 3000
 MAX_TOKENS_REBUILD = 4000
 
@@ -69,6 +77,18 @@ class ConfigError(Exception):
 
 class UpstreamError(Exception):
     """Raised when the model provider fails or returns unusable output."""
+
+
+def effective_deadline_seconds(context) -> int:
+    """Budget for this execution, clamped for synchronous HTTP requests."""
+    try:
+        headers = getattr(context.req, "headers", None) or {}
+        trigger = str(headers.get("x-appwrite-trigger", "http")).lower()
+    except Exception:
+        trigger = "http"
+    if trigger == "http":
+        return min(LLM_DEADLINE_SECONDS, HTTP_SYNC_CEILING_SECONDS)
+    return LLM_DEADLINE_SECONDS
 
 
 def parse_model_json(raw: str, model_name: str) -> dict:
@@ -130,7 +150,7 @@ def resolve_model(selected_model: str) -> tuple[str, str, str]:
     return model_id, provider, upstream_name
 
 
-def build_client(provider: str) -> OpenAI:
+def build_client(provider: str, budget_seconds: int) -> OpenAI:
     base_url, key_env = PROVIDERS[provider]
     api_key = os.environ.get(key_env, "").strip()
     if not api_key:
@@ -143,7 +163,7 @@ def build_client(provider: str) -> OpenAI:
     return OpenAI(
         api_key=api_key,
         base_url=base_url,
-        timeout=LLM_DEADLINE_SECONDS,
+        timeout=budget_seconds,
         max_retries=0,
     )
 
@@ -234,13 +254,16 @@ def main(context):
                 "service": "cv-backend-appwrite",
                 "models": list(MODEL_REGISTRY.keys()),
                 "deadline_seconds": LLM_DEADLINE_SECONDS,
+                "effective_deadline_seconds": effective_deadline_seconds(context),
+                "http_sync_ceiling_seconds": HTTP_SYNC_CEILING_SECONDS,
             },
             200,
             CORS_HEADERS,
         )
 
+    budget = effective_deadline_seconds(context)
     started = time.monotonic()
-    deadline = started + LLM_DEADLINE_SECONDS
+    deadline = started + budget
 
     try:
         payload = context.req.body
@@ -251,7 +274,7 @@ def main(context):
         model_id, provider, upstream_model = resolve_model(
             payload.get("selected_model", DEFAULT_MODEL_ID)
         )
-        client = build_client(provider)
+        client = build_client(provider, budget)
 
         if action == "evaluate":
             cv_text, has_photo, page_count = read_cv(payload)
@@ -322,7 +345,7 @@ def main(context):
         return context.res.json(
             {
                 "error": (
-                    f"The selected model did not answer within {LLM_DEADLINE_SECONDS}s. "
+                    f"The selected model did not answer within {budget}s. "
                     f"Try a faster model (DeepSeek V4 Flash) or raise the function timeout."
                 ),
                 "code": "llm_timeout",
