@@ -54,27 +54,34 @@ RETRY_MIN_BUDGET_SECONDS = 15
 
 # provider -> (base_url, env var holding the key)
 PROVIDERS = {
-    "nvidia": ("https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
     "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY"),
 }
 
 # Public model id -> (provider, upstream model name)
-# The same DeepSeek model is offered through both providers on purpose, so the
-# UI can compare provider latency independently of model quality.
+#
+# DeepSeek's own API only. NVIDIA NIM's shared free tier was measured at
+# 2.6-29 tok/s and returned "ResourceExhausted: Worker local total request
+# limit reached (317/48)" — the same DeepSeek model that answers in ~8s here
+# took 45s there, so what it measured was queue depth, not model quality.
+# deepseek-reasoner is excluded for a different reason: scoring the same CV
+# three times gave 41, 35 and 17 (24-point spread) versus 29, 26, 27 for
+# flash. A rubric that unstable cannot back a scoring product.
 MODEL_REGISTRY = {
-    "deepseek-v4-flash":             ("deepseek", "deepseek-chat"),
-    "deepseek-reasoner":             ("deepseek", "deepseek-reasoner"),
-    "deepseek-v4-flash-nim":         ("nvidia",   "deepseek-ai/deepseek-v4-flash"),
-    "deepseek-v4-pro-nim":           ("nvidia",   "deepseek-ai/deepseek-v4-pro"),
-    "llama-3.3-70b-instruct":        ("nvidia",   "meta/llama-3.3-70b-instruct"),
-    "llama-3.2-90b-vision-instruct": ("nvidia",   "meta/llama-3.2-90b-vision-instruct"),
-    "nemotron-nano-12b-v2-vl":       ("nvidia",   "nvidia/nemotron-nano-12b-v2-vl"),
+    "deepseek-v4-flash": ("deepseek", "deepseek-chat"),
 }
 
-# Ids used by older frontend builds, kept so cached bundles keep working.
+# Ids from earlier builds and from reports already stored in the database.
+# Everything resolves to the one supported model rather than erroring, so a
+# cached bundle or a replayed payload keeps working.
 LEGACY_MODEL_ALIASES = {
     "deepseek-chat": "deepseek-v4-flash",
-    "deepseek-v4-pro": "deepseek-v4-pro-nim",
+    "deepseek-reasoner": "deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek-v4-flash",
+    "deepseek-v4-flash-nim": "deepseek-v4-flash",
+    "deepseek-v4-pro-nim": "deepseek-v4-flash",
+    "llama-3.3-70b-instruct": "deepseek-v4-flash",
+    "llama-3.2-90b-vision-instruct": "deepseek-v4-flash",
+    "nemotron-nano-12b-v2-vl": "deepseek-v4-flash",
 }
 
 DEFAULT_MODEL_ID = "deepseek-v4-flash"
@@ -188,12 +195,6 @@ def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: 
     if remaining <= 1:
         raise FutureTimeout("No time budget left before contacting the model.")
 
-    extra_kwargs = {}
-    # DeepSeek reasoning models emit a long chain-of-thought that we neither
-    # show nor need; disabling it keeps us inside the time budget.
-    if "deepseek-v4-pro" in model_name or model_name == "deepseek-reasoner":
-        extra_kwargs["extra_body"] = {"chat_template_kwargs": {"thinking": False}}
-
     def _run() -> dict:
         resp = client.chat.completions.create(
             model=model_name,
@@ -204,7 +205,6 @@ def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: 
             temperature=0.3,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
-            **extra_kwargs,
         )
         # Parsed inside the retried block on purpose: a truncated or non-JSON
         # completion is an upstream failure worth one more shot, not a client
@@ -213,8 +213,8 @@ def call_llm(client: OpenAI, model_name: str, system_prompt: str, user_message: 
 
     # The SDK's own retries are disabled because they silently double latency.
     # Retry once by hand instead, and only while enough budget is left to have
-    # a realistic chance of finishing — NVIDIA NIM returns transient 503
-    # "ResourceExhausted" errors under load that clear immediately.
+    # a realistic chance of finishing — a transient upstream 5xx usually clears
+    # immediately, and a warm call costs about 8s of the budget.
     last_error: Exception | None = None
     for attempt in range(2):
         remaining = deadline - time.monotonic()
@@ -354,8 +354,9 @@ def main(context):
         return context.res.json(
             {
                 "error": (
-                    f"The selected model did not answer within {budget}s. "
-                    f"Pick a faster model — DeepSeek V4 Flash answers in about 8s."
+                    f"The analysis did not finish within {budget}s. This is "
+                    f"usually a temporary slowdown at the model provider — "
+                    f"please try again in a moment."
                 ),
                 "code": "llm_timeout",
                 "elapsed_seconds": elapsed,

@@ -77,74 +77,9 @@ export interface EvaluateResponse {
   report: CVScoreReport;
 }
 
-export type Provider = 'nvidia' | 'deepseek';
-
-export interface ModelOption {
-  id: string;
-  name: string;
-  provider: Provider;
-  providerLabel: string;
-  logo: string;
-  hint: string;
-}
-
-/**
- * Must stay in sync with MODEL_REGISTRY in functions/cv-backend/src/main.py.
- * The same DeepSeek model is offered through both providers on purpose, so
- * provider latency can be compared independently of model quality.
- */
-export const MODEL_OPTIONS: ModelOption[] = [
-  {
-    id: 'deepseek-v4-flash',
-    name: 'DeepSeek V4 Flash',
-    provider: 'deepseek',
-    providerLabel: 'DeepSeek API',
-    logo: '/assets/deepseek.png',
-    hint: 'Fastest',
-  },
-  {
-    id: 'deepseek-v4-flash-nim',
-    name: 'DeepSeek V4 Flash',
-    provider: 'nvidia',
-    providerLabel: 'NVIDIA NIM',
-    logo: '/assets/deepseek.png',
-    hint: '',
-  },
-  {
-    id: 'deepseek-v4-pro-nim',
-    name: 'DeepSeek V4 Pro',
-    provider: 'nvidia',
-    providerLabel: 'NVIDIA NIM',
-    logo: '/assets/deepseek.png',
-    hint: 'Deep reasoning',
-  },
-  {
-    id: 'llama-3.3-70b-instruct',
-    name: 'Llama 3.3 70B Instruct',
-    provider: 'nvidia',
-    providerLabel: 'NVIDIA NIM',
-    logo: '/assets/meta-black-icon.png',
-    hint: '',
-  },
-  {
-    id: 'llama-3.2-90b-vision-instruct',
-    name: 'Llama 3.2 90B Vision',
-    provider: 'nvidia',
-    providerLabel: 'NVIDIA NIM',
-    logo: '/assets/meta-black-icon.png',
-    hint: 'Multimodal',
-  },
-  {
-    id: 'nemotron-nano-12b-v2-vl',
-    name: 'Nemotron Nano 12B VL',
-    provider: 'nvidia',
-    providerLabel: 'NVIDIA NIM',
-    logo: '/assets/nvidia-logo-black-and-white.png',
-    hint: '',
-  },
-];
-
-export const DEFAULT_MODEL_ID = 'deepseek-v4-flash';
+/** Must stay in sync with MODEL_REGISTRY in functions/cv-backend/src/main.py. */
+export const MODEL_ID = 'deepseek-v4-flash';
+export const MODEL_LABEL = 'DeepSeek V4 Flash';
 
 export const errorMessage = (err: unknown, fallback = 'Unexpected error.'): string => {
   if (err instanceof Error && err.message) return err.message;
@@ -157,7 +92,6 @@ export interface IntakeData {
   country: string;
   sector: string;
   seniority: string;
-  selectedModel: string;
 }
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'https://6a66572c0032a728577a.fra.appwrite.run';
@@ -183,25 +117,15 @@ const fileToBase64 = (file: File): Promise<string> =>
  * the browser surfaces it as "Failed to fetch" / a CORS violation. Translate
  * that into something a user can act on.
  */
-const describeNetworkFailure = (modelId: string): string => {
-  const model = MODEL_OPTIONS.find((m) => m.id === modelId);
-  const label = model ? `${model.name} (${model.providerLabel})` : modelId;
-  const fastest = MODEL_OPTIONS.find((m) => m.id === DEFAULT_MODEL_ID);
-  // Deliberately does not suggest raising the function timeout: Appwrite's
-  // synchronous HTTP ceiling (~35s) is independent of it, so that advice sends
-  // people to a setting that cannot fix this. Nor does it suggest the model
-  // the user already picked.
-  const suggestion =
-    fastest && modelId !== fastest.id
-      ? `Pick a faster model — ${fastest.name} answers in about 8 seconds.`
-      : `Check that the cv-backend function is deployed and its API keys are set in the Appwrite console.`;
-  return (
-    `Could not reach the analysis service while using ${label}. ` +
-    `This usually means the request never completed. ${suggestion}`
-  );
-};
+// Deliberately does not suggest raising the function timeout: Appwrite's
+// synchronous HTTP ceiling is independent of it, so that advice sends people
+// to a setting that cannot fix this.
+const NETWORK_FAILURE_MESSAGE =
+  `Could not reach the analysis service. The request never completed — ` +
+  `check that the cv-backend function is deployed and that DEEPSEEK_API_KEY ` +
+  `is set in the Appwrite console, then try again.`;
 
-const postJSON = async <T>(payload: Record<string, unknown>, modelId: string): Promise<T> => {
+const postJSON = async <T>(payload: Record<string, unknown>): Promise<T> => {
   const url = API_URL.includes('appwrite') ? API_URL : `${API_URL}/evaluate`;
 
   let response: Response;
@@ -212,7 +136,7 @@ const postJSON = async <T>(payload: Record<string, unknown>, modelId: string): P
       body: JSON.stringify(payload),
     });
   } catch {
-    throw new Error(describeNetworkFailure(modelId));
+    throw new Error(NETWORK_FAILURE_MESSAGE);
   }
 
   if (!response.ok) {
@@ -242,7 +166,7 @@ export const evaluateCV = async (
     country: intakeData.country,
     sector: intakeData.sector,
     seniority: intakeData.seniority,
-    selected_model: intakeData.selectedModel ?? DEFAULT_MODEL_ID,
+    selected_model: MODEL_ID,
   };
 
   onProgress?.('market_search');
@@ -250,7 +174,7 @@ export const evaluateCV = async (
 
   let evaluateResp: EvaluateResponse;
   try {
-    evaluateResp = await postJSON<EvaluateResponse>(payload, intakeData.selectedModel);
+    evaluateResp = await postJSON<EvaluateResponse>(payload);
   } finally {
     clearTimeout(progressTimer);
   }
@@ -283,21 +207,17 @@ export const evaluateCV = async (
 export const rebuildCV = async (
   pdfFile: File,
   personaProfile: PersonaProfile,
-  selectedModel: string = DEFAULT_MODEL_ID,
   onProgress?: (step: string) => void
 ): Promise<CVRebuildReport> => {
   onProgress?.('ai_analysis');
   const pdf_base64 = await fileToBase64(pdfFile);
 
-  const result = await postJSON<CVRebuildReport>(
-    {
-      action: 'rebuild',
-      pdf_base64,
-      persona_profile: personaProfile,
-      selected_model: selectedModel,
-    },
-    selectedModel
-  );
+  const result = await postJSON<CVRebuildReport>({
+    action: 'rebuild',
+    pdf_base64,
+    persona_profile: personaProfile,
+    selected_model: MODEL_ID,
+  });
 
   onProgress?.('complete');
   return result;

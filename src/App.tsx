@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
 
-import {
-  evaluateCV,
-  rebuildCV,
-  errorMessage,
-  MODEL_OPTIONS,
-  DEFAULT_MODEL_ID,
-} from './lib/api';
-import type { PersonaProfile, CVScoreReport, CVRebuildReport, ModelOption } from './lib/api';
+import { evaluateCV, rebuildCV, errorMessage, MODEL_LABEL } from './lib/api';
+import type { PersonaProfile, CVScoreReport, CVRebuildReport } from './lib/api';
 import confetti from 'canvas-confetti';
 import './index.css';
 
@@ -25,7 +19,6 @@ function App() {
     country: '',
     sector: '',
     seniority: 'mid',
-    selectedModel: DEFAULT_MODEL_ID,
   });
   const [file, setFile] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
@@ -34,14 +27,8 @@ function App() {
   const [report, setReport] = useState<CVScoreReport | null>(null);
   const [personaProfile, setPersonaProfile] = useState<PersonaProfile | null>(null);
   const [rebuildReport, setRebuildReport] = useState<CVRebuildReport | null>(null);
-  const [hoveredModel, setHoveredModel] = useState<ModelOption | null>(null);
   const [error, setError] = useState('');
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' }>>([]);
-
-  // Falls back to the selected model so the caption slot is never empty and
-  // the panel height never shifts on hover.
-  const captionModel =
-    hoveredModel ?? MODEL_OPTIONS.find((m) => m.id === formData.selectedModel) ?? MODEL_OPTIONS[0];
 
   const addToast = (message: string, type: 'success' | 'error' = 'error') => {
     const id = Date.now();
@@ -122,9 +109,7 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const result = await rebuildCV(file, personaProfile, formData.selectedModel, (step) =>
-        setProgressStep(step)
-      );
+      const result = await rebuildCV(file, personaProfile, (step) => setProgressStep(step));
       setRebuildReport(result);
       addToast('CV rebuilt successfully!', 'success');
     } catch (err: unknown) {
@@ -194,6 +179,10 @@ function App() {
                 CV <span>Yorumlayıcısı</span>
               </h1>
               <p>Data-driven CV analysis benchmarked against regional market standards.</p>
+              <div className="engine-badge">
+                <img src="/assets/deepseek.png" alt="" aria-hidden="true" />
+                <span>Powered by {MODEL_LABEL}</span>
+              </div>
             </div>
 
             <form onSubmit={handleSubmit}>
@@ -255,42 +244,6 @@ function App() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div className="form-group">
-                <label>AI Model</label>
-                <div className="model-selector" role="radiogroup" aria-label="AI model">
-                  {MODEL_OPTIONS.map((m) => {
-                    const selected = formData.selectedModel === m.id;
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={`${m.name} — ${m.providerLabel}`}
-                        className={`model-tile provider-${m.provider} ${selected ? 'selected' : ''}`}
-                        onClick={() => setFormData({ ...formData, selectedModel: m.id })}
-                        onMouseEnter={() => setHoveredModel(m)}
-                        onMouseLeave={() => setHoveredModel(null)}
-                        onFocus={() => setHoveredModel(m)}
-                        onBlur={() => setHoveredModel(null)}
-                      >
-                        <img src={m.logo} alt="" aria-hidden="true" />
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* Rendered outside the buttons on purpose: a <button> is a
-                    containing block for absolutely positioned children in
-                    Chromium, which squeezes a tooltip to the tile's width. */}
-                <div className="model-caption" aria-live="polite">
-                  <strong>{captionModel.name}</strong>
-                  <em>
-                    {captionModel.providerLabel}
-                    {captionModel.hint ? ` · ${captionModel.hint}` : ''}
-                  </em>
-                </div>
               </div>
 
               <div className="form-group">
