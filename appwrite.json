@@ -23,10 +23,11 @@
       "name": "CV Yorumlayıcı Web",
       "framework": "vite",
       "buildRuntime": "node-22",
-      "buildCommand": "echo 'already built'",
-      "outputDirectory": ".",
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "outputDirectory": "./dist",
       "enabled": true,
-      "path": "dist"
+      "path": "."
     }
   ]
 }
